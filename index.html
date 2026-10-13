@@ -1,0 +1,961 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>日本配卡計算</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700;900&display=swap">
+<style>
+/* 版面概念：把六張卡當成六條地鐵路線，每個消費情境是一條線上的站，順位就是搭乘順序。 */
+:root {
+  --bg: #0e1014;
+  --panel: #161920;
+  --panel-2: #1c2029;
+  --rule: #2a2f3b;
+  --fg: #edeff4;
+  --muted: #9199aa;
+  --accent: #edeff4;
+  --on-accent: #0e1014;
+  --focus: #7cc4ff;
+  --warn: #ffcf70;
+  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.6;
+  padding-inline: 16px;
+  padding-block: 28px 56px;
+}
+.wrap { max-width: 760px; margin-inline: auto; display: flex; flex-direction: column; gap: 28px; }
+h1, h2, h3, p { margin: 0; text-wrap: balance; }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+
+/* 標題 + 路線色帶（本頁唯一的大膽處） */
+.masthead { display: flex; flex-direction: column; gap: 14px; }
+.eyebrow { font-size: 12px; letter-spacing: .14em; color: var(--muted); font-weight: 500; }
+h1 { font-size: clamp(34px, 9vw, 52px); line-height: 1.1; font-weight: 900; letter-spacing: .02em; }
+.linemap { display: flex; height: 8px; border-radius: 4px; overflow: hidden; gap: 3px; }
+.linemap i { flex: 1; background: var(--c); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend b { width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+.assump { font-size: 13px; color: var(--muted); }
+
+/* 分頁 */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--rule); overflow-x: auto; }
+.tab {
+  appearance: none; background: none; border: 0; color: var(--muted);
+  font: inherit; font-weight: 700; padding: 10px 14px; cursor: pointer; white-space: nowrap;
+  border-bottom: 3px solid transparent; margin-bottom: -1px;
+}
+.tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--fg); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+
+[hidden] { display: none !important; }
+section.pane { display: flex; flex-direction: column; gap: 20px; }
+.lead { color: var(--muted); font-size: 14px; }
+.badge { display: inline-block; font-size: 11px; letter-spacing: .08em; padding: 1px 8px; border: 1px solid var(--rule); border-radius: 999px; color: var(--muted); vertical-align: middle; }
+
+/* 輸入列 */
+.rows { display: flex; flex-direction: column; gap: 10px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 10px; }
+.row select { flex: 1 1 220px; min-width: 0; }
+.amt { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; }
+.amt .yen { font-size: 12px; color: var(--muted); min-width: 74px; text-align: right; }
+select, input[type=number] {
+  background: var(--panel-2); color: var(--fg); border: 1px solid var(--rule); border-radius: 8px;
+  font: inherit; padding: 8px 10px; min-height: 40px;
+}
+input[type=number] { width: 112px; font-family: var(--font-num); text-align: right; }
+.btn {
+  appearance: none; font: inherit; font-weight: 700; cursor: pointer; border-radius: 8px; min-height: 40px; padding: 0 14px;
+  background: var(--accent); color: var(--on-accent); border: 1px solid var(--accent);
+}
+.btn.ghost { background: transparent; color: var(--fg); border-color: var(--rule); }
+.btn.icon { padding: 0; width: 40px; color: var(--muted); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* 結果 */
+.summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+.summary div { background: var(--panel); padding: 12px 14px; min-width: 0; }
+.summary small { display: block; color: var(--muted); font-size: 12px; }
+.summary strong { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: clamp(18px, 5vw, 26px); font-weight: 600; }
+.alloc { display: flex; flex-direction: column; gap: 10px; }
+.card-row { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.card-row header { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-weight: 700; }
+.card-row header .num { font-weight: 500; color: var(--muted); }
+.leg { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 10px; align-items: baseline; font-size: 14px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+.chip::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; }
+.leg .num { color: var(--muted); font-size: 13px; }
+.leg .gain { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.cashnote { color: var(--muted); font-size: 14px; }
+
+h2 { font-size: 18px; font-weight: 900; }
+.quota { display: flex; flex-direction: column; gap: 10px; }
+.q { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; font-size: 13px; }
+.q .bar { grid-column: 1 / -1; height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+.q .bar i { display: block; height: 100%; background: var(--c); border-radius: 3px; }
+.q .full { color: var(--warn); }
+
+/* 順位查詢：地鐵路線樣式 */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { appearance: none; font: inherit; font-size: 14px; cursor: pointer; color: var(--fg); background: var(--panel); border: 1px solid var(--rule); border-radius: 999px; padding: 6px 14px; min-height: 36px; }
+.pill[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
+.grp { font-size: 12px; letter-spacing: .12em; color: var(--muted); margin-block: 4px -2px; }
+.station-box { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 18px 16px 8px; display: flex; flex-direction: column; gap: 6px; }
+.station-box h3 { font-size: 20px; font-weight: 900; }
+.station-box .sub { font-size: 13px; color: var(--muted); }
+ol.line { list-style: none; margin: 12px 0 0; padding: 0; }
+ol.line li { position: relative; padding: 0 0 20px 34px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: baseline; }
+ol.line li::before { content: ""; position: absolute; left: 0; top: 5px; width: 18px; height: 18px; border-radius: 50%; border: 4px solid var(--c); background: var(--c); }
+ol.line li.fb::before { background: var(--panel); }
+ol.line li::after { content: ""; position: absolute; left: 7px; top: 24px; bottom: -2px; width: 4px; background: var(--c); opacity: .55; }
+ol.line li:last-child::after { display: none; }
+ol.line .name { font-weight: 700; }
+ol.line .rate { font-family: var(--font-num); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+ol.line .meta { grid-column: 1 / -1; font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.tag { border: 1px solid var(--warn); color: var(--warn); border-radius: 999px; padding: 0 8px; font-size: 12px; }
+.notes { font-size: 13px; color: var(--muted); border-top: 1px solid var(--rule); padding: 12px 0; display: flex; flex-direction: column; gap: 4px; }
+.rankno { font-family: var(--font-num); color: var(--muted); font-size: 12px; margin-right: 8px; }
+
+/* 規則表 */
+.tablewrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 14px; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-size: 12px; letter-spacing: .08em; color: var(--muted); font-weight: 500; background: var(--panel); }
+tr:last-child td { border-bottom: 0; }
+td.num, th.r { text-align: right; white-space: nowrap; }
+.disclaimer { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 6px; }
+.disclaimer strong { color: var(--fg); }
+
+.cfg { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.cfg .rate { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); }
+.cfg .rate input { width: 84px; }
+.chk small { display: block; font-size: 12px; color: var(--muted); }
+.cfgnote { flex: 1 1 100%; font-size: 12px; color: var(--muted); }
+.cfgbox { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; }
+.cfgbox summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; min-height: 44px; cursor: pointer; list-style: none; }
+.cfgbox summary::-webkit-details-marker { display: none; }
+.cfgbox summary::after { content: "▾"; color: var(--muted); }
+.cfgbox[open] summary::after { content: "▴"; }
+.cfgbox .sumlabel { font-weight: 700; }
+.cfgbox .sumval { color: var(--muted); font-size: 13px; margin-left: auto; text-align: right; }
+.cfgbox .cfg { padding: 4px 14px 14px; }
+
+/* 手機：輸入框至少 16px，iOS 才不會在點選時自動放大 */
+select, input[type=number], input[type=text], .logform input[type=text] { font-size: 16px; }
+.tabs { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); }
+.chips .pill { font-size: 13px; padding: 4px 11px; min-height: 36px; }
+.chips { gap: 6px; }
+.sym { font-family: var(--font-num); color: var(--muted); font-size: 13px; min-width: 28px; text-align: right; }
+.logform input[type=text] { background: var(--panel-2); color: var(--fg); border: 1px solid var(--rule); border-radius: 8px; font: inherit; padding: 8px 10px; min-height: 40px; }
+.f-note { flex: 1 1 100%; }
+.entry .what .memo { color: var(--fg); font-size: 13px; }
+.chk { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); min-height: 40px; }
+.chk input { width: 18px; height: 18px; accent-color: var(--fg); }
+
+/* 刷卡紀錄 */
+.logform { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 14px; }
+.logform .f { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.logform label { font-size: 12px; color: var(--muted); letter-spacing: .06em; }
+.f-scn { flex: 1 1 200px; } .f-pool { flex: 1 1 200px; } .f-amt { flex: 0 1 140px; } .f-cur { flex: 0 1 130px; }
+
+/* 我有的卡 */
+.own { display: flex; flex-direction: column; gap: 8px; }
+.ownlabel { font-size: 12px; color: var(--muted); letter-spacing: .06em; }
+.pill .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--c); margin-right: 7px; }
+.pill[aria-pressed="false"] .dot { opacity: .35; }
+
+/* 順位總表 */
+.ov { display: flex; flex-direction: column; gap: 10px; }
+.ovrow { display: flex; flex-direction: column; gap: 8px; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; }
+.ovname { font-weight: 700; }
+.ovname small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+.steps { display: flex; flex-direction: column; gap: 6px; }
+.step { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; background: var(--panel-2); border: 1px solid var(--rule); border-radius: 8px; padding: 8px 12px; font-size: 14px; }
+.step .n { font-family: var(--font-num); color: var(--muted); font-size: 12px; text-align: center; }
+.step .who { display: flex; flex-direction: column; min-width: 0; }
+.step .r { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-weight: 600; font-size: 18px; }
+.step small { color: var(--muted); font-size: 12px; }
+.step.fb { border-style: dashed; }
+.step.done .who, .step.done .r { opacity: .45; text-decoration: line-through; }
+.ovrow .none { color: var(--muted); font-size: 14px; }
+.logform select, .logform input { width: 100%; }
+.hint { font-size: 14px; min-height: 1.6em; color: var(--muted); }
+.hint b { color: var(--fg); }
+.hint .over { color: var(--warn); }
+.loghead { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.entries { display: flex; flex-direction: column; border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+.entry { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 4px 12px; align-items: center; padding: 10px 12px; background: var(--panel); border-bottom: 1px solid var(--rule); font-size: 14px; }
+.entry:last-child { border-bottom: 0; }
+.entry .d { color: var(--muted); font-size: 13px; }
+.entry .what { min-width: 0; display: flex; flex-direction: column; }
+.entry .what small { color: var(--muted); }
+.entry button { appearance: none; background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; min-width: 36px; min-height: 36px; }
+.empty { padding: 14px; color: var(--muted); font-size: 14px; background: var(--panel); }
+.tag.now { border-color: var(--fg); color: var(--fg); background: var(--panel-2); font-weight: 700; }
+ol.line li.done .name, ol.line li.done .rate { opacity: .45; }
+@media (max-width: 480px) {
+  .summary div { padding: 10px; }
+  .leg { grid-template-columns: minmax(0, 1fr) auto; }
+  .leg .num { grid-column: 1 / -1; order: 3; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tab, .pill, .btn { transition: background-color .15s, color .15s, border-color .15s; }
+}
+.tienote{font-size:12px;color:var(--muted,#8a93a3);margin:4px 0 0 2px}
+.step.tie .n{font-weight:700}
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div class="eyebrow">JAPAN TRIP · 刷卡順位 v5</div>
+    <h1>日本配卡計算</h1>
+    <div class="linemap" aria-hidden="true" id="linemap"></div>
+    <div class="own">
+      <span class="ownlabel">我有這些卡（沒有的就點掉，順位和試算會跳過）</span>
+      <div class="chips" id="ownChips" role="group" aria-label="我有的卡"></div>
+    </div>
+    <p class="assump">整理於 2026/10 · 回饋為淨回饋（已扣 1.5% 海外手續費）· 以各銀行官方公告為準</p>
+  </header>
+
+  <details class="cfgbox" id="cfgbox">
+    <summary><span class="sumlabel">設定</span><span id="cfgSummary" class="sumval"></span></summary>
+    <div class="cfg">
+      <div class="chips" role="group" aria-label="輸入幣別">
+        <button class="pill" id="cur-JPY" aria-pressed="true">日圓 ¥</button>
+        <button class="pill" id="cur-TWD" aria-pressed="false">新台幣 NT$</button>
+      </div>
+      <label class="rate">匯率 NT$1 = ¥ <input type="number" id="rate" step="0.01" min="0.1" value="5" inputmode="decimal"></label>
+      <label class="rate">CUBE 日本基本回饋 <input type="number" id="cubeBase" step="0.1" min="0.3" max="10" value="3.5" inputmode="decimal"> %</label>
+      <span class="cfgnote">日本 3.5% 不分等級，一般不用改；App 顯示不同再調整。</span>
+      <span class="cfgnote">試算頁的日本現場金額可用日圓輸入，額度與回饋仍以新台幣計算。刷卡紀錄每一筆可以各自選日圓或新台幣。</span>
+    </div>
+  </details>
+
+  <nav class="tabs" role="tablist" aria-label="功能">
+    <button class="tab" role="tab" id="t-calc" aria-selected="true" aria-controls="p-calc">行程試算</button>
+    <button class="tab" role="tab" id="t-log" aria-selected="false" aria-controls="p-log">刷卡紀錄</button>
+    <button class="tab" role="tab" id="t-rank" aria-selected="false" aria-controls="p-rank">順位查詢</button>
+    <button class="tab" role="tab" id="t-rules" aria-selected="false" aria-controls="p-rules">規則表</button>
+  </nav>
+
+  <section class="pane" id="p-calc" role="tabpanel" aria-labelledby="t-calc">
+    <p class="lead">輸入預計消費（新台幣），自動把共用額度分配給各張卡，刷滿就換下一張。<span class="badge" id="sampleBadge" hidden>範例金額，可直接修改或清空</span></p>
+    <div class="rows" id="rows"></div>
+    <div class="actions">
+      <button class="btn" id="add">新增一筆</button>
+      <button class="btn ghost" id="reset">看範例</button>
+      <button class="btn ghost" id="clear">清空</button>
+      <label class="chk" id="deductWrap" hidden><input type="checkbox" id="deduct" checked> <span>只用剩下的額度分配<small id="deductHint"></small></span></label>
+    </div>
+    <div class="summary" id="summary" aria-live="polite"></div>
+    <div class="alloc" id="alloc"></div>
+    <div>
+      <h2>額度使用</h2>
+      <div class="quota" id="quota" style="margin-top:12px"></div>
+    </div>
+  </section>
+
+  <section class="pane" id="p-log" role="tabpanel" aria-labelledby="t-log" hidden>
+    <p class="lead">每刷一筆就記一下，自動算出各張卡還剩多少額度，以及這個情境現在該刷哪張。紀錄只存在這個瀏覽器。</p>
+    <div class="logform">
+      <div class="f f-scn"><label for="logScn">消費情境</label><select id="logScn"></select></div>
+      <div class="f f-cur"><label for="logCur">幣別</label><select id="logCur"><option value="JPY">日圓 ¥</option><option value="TWD">新台幣 NT$</option></select></div>
+      <div class="f f-amt"><label for="logAmt" id="logAmtLbl">金額（日圓）</label><input type="number" id="logAmt" inputmode="numeric" min="0" step="1" placeholder="例如 3200"></div>
+      <div class="f f-pool"><label for="logPool">刷哪張卡</label><select id="logPool"></select></div>
+      <div class="f f-note"><label for="logNote">店名備註（選填）</label><input type="text" id="logNote" maxlength="30" placeholder="例如 新宿 UNIQLO"></div>
+      <button class="btn" id="logAdd">記下這筆</button>
+    </div>
+    <p class="hint" id="logHint" aria-live="polite"></p>
+    <div>
+      <h2>各卡剩餘額度</h2>
+      <div class="quota" id="board" style="margin-top:12px"></div>
+    </div>
+    <div>
+      <div class="loghead"><h2>刷卡紀錄</h2><button class="btn ghost" id="logClear">清除全部紀錄</button></div>
+      <div class="entries" id="entries" style="margin-top:12px"></div>
+    </div>
+  </section>
+
+  <section class="pane" id="p-rank" role="tabpanel" aria-labelledby="t-rank" hidden>
+    <p class="lead">每個情境照順序刷：第一張刷到額度上限，再換下一張。只列出你勾選的卡。</p>
+    <div class="ov" id="overview"></div>
+    <h2>情境明細</h2>
+    <div id="chips" style="display:flex;flex-direction:column;gap:8px"></div>
+    <div class="station-box" id="station"></div>
+  </section>
+
+  <section class="pane" id="p-rules" role="tabpanel" aria-labelledby="t-rules" hidden>
+    <p class="lead">試算用的全部規則。額度為消費金額上限（新台幣）。</p>
+    <div class="tablewrap"><table id="rulesTable"></table></div>
+    <div class="disclaimer">
+      <p><strong>使用前請確認</strong></p>
+      <p>回饋與條件會變動，結帳前請對照各銀行官網。「備援」是依一般店順位推定。回饋率皆已扣 1.5% 國外手續費。</p>
+      <p>日圓以你填的匯率換算，實際以刷卡當日結算為準。刷卡紀錄只存在這個瀏覽器，換手機或清除資料會消失。</p>
+      <p><strong>中信 uniopen</strong>：8% 加碼每月上限 500 點（約 NT$6,250），至 2026/12/31，回饋為 OPENPOINT 點數。</p>
+      <p><strong>聯邦吉鶴</strong>：日幣請款 2.5% 無上限；Apple Pay 加碼月上限 NT$40,000；特店 3% 上限 600 元（活動期間合計）。結帳請選日圓。</p>
+      <p><strong>CUBE</strong>：秋日遊 2026/10/1–11/30，需先在 App 切換權益，領券類要先領券；回饋為小樹點。日本 3.5% 不分等級，Level 1 也適用。</p>
+      <p><strong>富邦 J 卡</strong>：基本 1.5%（淨）。搶到每月 20 日 16:00 的登錄名額、且消費當月完成登錄，單月一般消費超過 NT$15,000 的部分加碼 3%（淨 4.5%），加碼回饋上限 1,000 元（約再刷 NT$33,333）；名額有限。須集中刷這張卡才拿得到，所以順位只列基本 1.5%。行程試算有勾選 J 卡時，會多一張「全部集中刷 J 卡」的比較；只勾 J 卡一張時，直接計入加碼。</p>
+      <p><strong>玉山熊本熊</strong>：日本一般淨 1.0%；指定商店加碼後淨 7.0%，需登錄，只限街邊店，上限約 NT$8,333。</p>
+      <p><strong>不計入的付款方式</strong>：玉山 Wallet 綁 PayPay、台新 Pay＋CHILL 是台幣結帳、扣帳戶餘額，不是信用卡。</p>
+      <p>本工具為個人整理的試算參考，不是理財或投資建議。</p>
+    </div>
+  </section>
+</div>
+
+<script>
+/* ===== 規則資料（單一來源）：整理於 2026/10，以各銀行官方公告為準 ===== */
+const CARDS = {
+  dbs:  { name: '星展 eco',     short: '星展',    color: '#F0524B' },
+  jihe: { name: '聯邦吉鶴',     short: '吉鶴',    color: '#FF9A1F' },
+  ctbc: { name: '中信 uniopen', short: '中信',    color: '#19C28F' },
+  rich: { name: '台新 Richart', short: 'Richart', color: '#26B5E8' },
+  cube: { name: 'CUBE',         short: 'CUBE',    color: '#9B86E6' },
+  ubm:  { name: '聯邦 M 卡',    short: 'M 卡',    color: '#C9AD72' },
+  fubon:{ name: '富邦 J 卡',    short: 'J 卡',    color: '#E86AA6' },
+  esun: { name: '玉山熊本熊',   short: '熊本熊',  color: '#B7D443' }
+};
+
+const INF = 1e12;
+
+/* 每個「額度池」= 一張卡在某種條件下的回饋率與消費上限（新台幣） */
+const POOLS = {
+  ctbc95:   { card: 'ctbc', rate: 9.5, cap: 6250,  label: '中信 9.5%' },
+  dbs35:    { card: 'dbs',  rate: 3.5, cap: 15000, label: '星展 3.5%' },
+  jiheApple:{ card: 'jihe', rate: 5.5, cap: 20000, label: '吉鶴 Apple Pay 5.5%', tag: 'Apple Pay', shared: 'jiheAP' },
+  jihe25:   { card: 'jihe', rate: 2.5, cap: 40000, label: '吉鶴 Apple Pay 2.5%', tag: 'Apple Pay', shared: 'jiheAP' },
+  cube35:   { card: 'cube', rate: 3.5, cap: 13333, label: 'CUBE Suica 3.5%', tag: '先領券', cubeAdd: 0 },
+  cubeUq:   { card: 'cube', rate: 3.5, cap: INF,   label: 'CUBE UNIQLO 3.5%', tag: '限街邊店', cubeAdd: 0 },
+  cubeEes:  { card: 'cube', rate: 8.7, cap: 5970,  label: 'CUBE 愛電王 8.7%', tag: '先領券', cubeAdd: 5.2 },
+  cube20:   { card: 'cube', rate: 2.0, cap: INF,   label: 'CUBE 日本一般 2.0%', cubeAdd: -1.5 },
+  rich18:   { card: 'rich', rate: 1.8, cap: INF,   label: 'Richart 玩旅刷 1.8%' },
+  fubonJ15: { card: 'fubon', rate: 1.5, cap: INF,   label: '富邦 J 卡 海外 1.5%' },
+  esunJ70:  { card: 'esun',  rate: 7.0, cap: 8333,  label: '玉山熊本熊 指定店 7%', tag: '需登錄、街邊店' },
+  esun10:   { card: 'esun',  rate: 1.0, cap: INF,   label: '玉山熊本熊 日本一般 1%' },
+  ubmKlook: { card: 'ubm',  rate: 6.0, cap: 5000,  label: 'M 卡 旅遊／訂房網站 6%', pre: true },
+  rich33:   { card: 'rich', rate: 3.3, cap: INF,   label: 'Richart 3.3%', pre: true },
+  richIns13:{ card: 'rich', rate: 1.3, cap: INF,   label: 'Richart 旅平險 平日 1.3%', tag: '免切換權益', pre: true },
+  richIns20:{ card: 'rich', rate: 2.0, cap: INF,   label: 'Richart 旅平險 假日 2%', tag: '需切假日刷', pre: true },
+  ubmIns:   { card: 'ubm',  rate: 1.2, cap: INF,   label: 'M 卡 旅平險 1.2%', pre: true }
+};
+
+/* 共用額度：多個額度池吃同一份上限（吉鶴 Apple Pay 1.5% 加碼，月上限 600 點 = NT$40,000，特店與一般店共用） */
+const SHARED = {
+  jiheAP: { card: 'jihe', cap: 40000, label: '吉鶴 Apple Pay 1.5% 加碼（特店與一般店共用）' }
+};
+
+/* opts：依順位排列；前綴 ~ 代表備援（v5 表未列出，沿用一般店順位推定） */
+const SCN = {
+  suica:   { name: 'Suica 儲值', group: '日本現場', opts: ['cube35', 'cube20', 'rich18'],
+             notes: ['CUBE 需先領券；3.5% 刷完仍有 2% 無上限。'] },
+  chain:   { name: '便利商店／百貨／大型連鎖', group: '日本現場',
+             opts: ['jiheApple', 'ctbc95', 'dbs35', 'cube20', '~rich18', 'fubonJ15', 'esun10'],
+             sub: '7-11、全家、Lawson、BIC、Yodobashi、唐吉訶德、迪士尼、USJ、三越、高島屋、永旺',
+             notes: ['吉鶴 3% 特店加碼上限 600 元是整個活動期間（至 12/31）。Apple Pay 1.5% 需先登錄、單筆滿 NT$100。'] },
+  uniqlo:  { name: 'UNIQLO', group: '日本現場',
+             opts: ['ctbc95', 'cubeUq', 'dbs35', '~jihe25', '~cube20', '~rich18', 'fubonJ15', 'esun10'],
+             notes: ['CUBE 3.5% 只限獨立街邊店，商場內門市請看「GU／一般店家」。'] },
+  general: { name: 'GU／一般店家', group: '日本現場',
+             opts: ['ctbc95', 'dbs35', 'jihe25', 'cube20', 'rich18', 'fubonJ15', 'esun10'],
+             notes: ['J 卡加碼要單月滿 NT$15,000 且集中刷，順位只列基本 1.5%。'] },
+  esunShop:{ name: '玉山指定日本商店（多為當地餐廳）', group: '日本現場',
+             opts: ['esunJ70', 'ctbc95', 'dbs35', 'jihe25', 'cube20', 'rich18', 'fubonJ15', 'esun10'],
+             only: 'esun', sub: '只適用街邊店，百貨店不行，需先在玉山登錄',
+             notes: ['需先登錄、只限街邊店。專屬優惠先刷，通用額度留給其他店。'] },
+  other:   { name: '其他（餐廳、藥妝、車票、景點…）', group: '日本現場',
+             opts: ['ctbc95', 'dbs35', 'jihe25', 'cube20', 'rich18', 'fubonJ15', 'esun10'], logAll: true,
+             notes: ['沿用一般店順位試算；記錄時可改選任何一張卡。'] },
+  ees:     { name: '愛電王', group: '日本現場', only: 'cube',
+             opts: ['cubeEes', '~dbs35', '~jihe25', '~cube20', '~rich18'],
+             notes: ['CUBE 領券後 8.7%，額度刷滿再換下一張。'] },
+  tadaya:  { name: '多慶屋', group: '日本現場', only: 'jihe',
+             opts: ['jihe25', '~cube20', '~rich18'],
+             notes: ['吉鶴另搭 12% 券（需單筆未稅滿 ¥5,000），屬折價，不計入下方回饋試算。'] },
+  cash:    { name: '只收現金／PayPay', group: '日本現場', opts: [],
+             notes: ['付現金，或用玉山 Wallet 的 PayPay、台新 Pay＋CHILL（台幣結帳，說明見規則表）。'] },
+  klook:   { name: 'Klook／KKday 預訂行程', group: '出發前／網購',
+             opts: ['ubmKlook', 'rich33'],
+             notes: ['M 卡 6% 刷滿 NT$5,000（回饋 NT$300）為止，與住宿網站共用額度。'] },
+  travelSite:{ name: '住宿／訂房網站', group: '出發前／網購',
+             sub: 'Agoda、Booking.com、Hotels.com、Expedia、Trip.com、AsiaYo、ezTravel、Airbnb',
+             opts: ['ubmKlook', 'rich33'],
+             notes: ['小額用 M 卡 6%（與 Klook 共用額度）；大於 NT$5,000 整筆刷台新。外幣請款請改選「海外線上消費」。'] },
+  flight:  { name: '機票（單筆大額）', group: '出發前／網購',
+             opts: ['rich33'],
+             notes: ['大額整筆刷台新，不占 M 卡額度。外幣請款請改選「海外線上消費」。'] },
+  overseasOnline:{ name: '海外線上消費（外幣請款）', group: '出發前／網購',
+             sub: '海外網購，或以外幣請款的機票、住宿',
+             opts: ['rich18'],
+             notes: ['外幣請款扣 1.5% 手續費，台新 3.3% 實得 1.8%。'] },
+  insWk:   { name: '旅平險（平日）', group: '出發前／網購',
+             opts: ['richIns13', 'ubmIns'],
+             notes: ['台新平日 1.3%，不用切換權益。'] },
+  insHol:  { name: '旅平險（假日）', group: '出發前／網購',
+             opts: ['richIns20', 'ubmIns'],
+             notes: ['假日需先切換「假日刷」，2% 取代 1.3%，不疊加。'] }
+};
+
+function parseOpt(s) { return s[0] === '~' ? { p: s.slice(1), fb: true } : { p: s, fb: false }; }
+
+/* 使用者有哪些卡：null 代表全部都有；否則是卡片 id 的 Set */
+let OWNED = null;
+function setOwned(s) { OWNED = s; }
+function hasCard(card) { return !OWNED || OWNED.has(card); }
+function scnOn(k) { const o = SCN[k].only; return !o || hasCard(o); }
+function optsOf(scn) {
+  if (!scnOn(scn)) return [];
+  const l = SCN[scn].opts.filter(o => hasCard(POOLS[parseOpt(o).p].card));
+  /* CUBE 基本回饋調低後，若排在它後面的非備援選項回饋更高，就讓 CUBE 往後排 */
+  for (let pass = 0; pass < l.length; pass++) {
+    for (let i = 0; i < l.length - 1; i++) {
+      const a = parseOpt(l[i]), b = parseOpt(l[i + 1]);
+      if (POOLS[a.p].cubeAdd !== undefined && !a.fb && !b.fb && POOLS[b.p].rate > POOLS[a.p].rate) { const t = l[i]; l[i] = l[i + 1]; l[i + 1] = t; }
+    }
+  }
+  return l;
+}
+
+/* CUBE 依等級（Level 1/2/3）回饋不同：以「日本基本回饋」為準，其餘 CUBE 費率由它推算（淨值，已扣 1.5%） */
+let CUBE_BASE = 3.5;
+function setCubeBase(b) {
+  CUBE_BASE = Math.min(10, Math.max(0.3, b));
+  Object.values(POOLS).forEach(P => {
+    if (P.cubeAdd === undefined) return;
+    P.rate = Math.max(0, Math.round((CUBE_BASE + P.cubeAdd) * 100) / 100);
+    P.label = P.label.replace(/[\d.]+%/, P.rate + '%');
+  });
+}
+
+/* ===== 最大回饋分配：最小成本最大流，共用額度自動換卡 ===== */
+function solve(items, used) {
+  const EPS = 1e-9;
+  const act = items.filter(it => it.amt > 0 && SCN[it.scn] && SCN[it.scn].opts.length);
+  const poolIds = Object.keys(POOLS);
+  const sharedIds = Object.keys(SHARED);
+  const S = 0, m = act.length, T = 1 + m + poolIds.length + sharedIds.length;
+  const poolNode = {}; poolIds.forEach((id, i) => { poolNode[id] = 1 + m + i; });
+  const sharedNode = {}; sharedIds.forEach((id, i) => { sharedNode[id] = 1 + m + poolIds.length + i; });
+  const g = Array.from({ length: T + 1 }, () => []);
+  const E = [];
+  function add(u, v, cap, cost) {
+    E.push({ u, v, cap, cost, flow: 0 }); g[u].push(E.length - 1);
+    E.push({ u: v, v: u, cap: 0, cost: -cost, flow: 0 }); g[v].push(E.length - 1);
+    return E.length - 2;
+  }
+  const itemEdges = act.map((it, i) => {
+    add(S, 1 + i, it.amt, 0);
+    return optsOf(it.scn).map((o, rank) => {
+      const { p } = parseOpt(o);
+      return { p, e: add(1 + i, poolNode[p], INF, -POOLS[p].rate + rank * 1e-6) };
+    });
+  });
+  poolIds.forEach(id => {
+    const cap = POOLS[id].cap >= INF ? INF : Math.max(0, POOLS[id].cap - ((used && used[id]) || 0));
+    add(poolNode[id], POOLS[id].shared ? sharedNode[POOLS[id].shared] : T, cap, 0);
+  });
+  sharedIds.forEach(sid => {
+    const usedSum = poolIds.filter(id => POOLS[id].shared === sid).reduce((a, id) => a + ((used && used[id]) || 0), 0);
+    add(sharedNode[sid], T, Math.max(0, SHARED[sid].cap - usedSum), 0);
+  });
+
+  for (let guard = 0; guard < 10000; guard++) {
+    const dist = new Array(T + 1).fill(Infinity), prev = new Array(T + 1).fill(-1), inq = new Array(T + 1).fill(false);
+    dist[S] = 0; const q = [S];
+    while (q.length) {
+      const u = q.shift(); inq[u] = false;
+      for (const id of g[u]) {
+        const e = E[id];
+        if (e.cap - e.flow > EPS && dist[u] + e.cost < dist[e.v] - 1e-12) {
+          dist[e.v] = dist[u] + e.cost; prev[e.v] = id;
+          if (!inq[e.v]) { inq[e.v] = true; q.push(e.v); }
+        }
+      }
+    }
+    if (dist[T] === Infinity) break;
+    let b = Infinity;
+    for (let v = T; v !== S; v = E[prev[v]].u) b = Math.min(b, E[prev[v]].cap - E[prev[v]].flow);
+    if (b <= EPS) break;
+    for (let v = T; v !== S; v = E[prev[v]].u) { E[prev[v]].flow += b; E[prev[v] ^ 1].flow -= b; }
+  }
+
+  const poolUse = {}; let total = 0, spend = 0;
+  const rows = items.map(it => {
+    const i = act.indexOf(it);
+    const cash = !!SCN[it.scn] && SCN[it.scn].opts.length === 0;
+    const row = { item: it, cash, alloc: [] };
+    if (i >= 0) {
+      itemEdges[i].forEach(({ p, e }) => {
+        const f = E[e].flow;
+        if (f > 1e-6) {
+          const reward = f * POOLS[p].rate / 100;
+          row.alloc.push({ p, amt: f, reward });
+          poolUse[p] = (poolUse[p] || 0) + f; total += reward; spend += f;
+        }
+      });
+    }
+    return row;
+  });
+  /* 富邦 J 卡加碼 3%：只算單月消費超過 15,000 的部分，加碼回饋上限 1,000 元（約再刷 33,333）。
+     只有勾選 J 卡一張時，才把加碼算進去；其他情況要集中刷才有意義，排名不採用。 */
+  let jBonus = null;
+  if (OWNED && OWNED.size === 1 && OWNED.has('fubon')) {
+    const prior = (used && used.fubonJ15) || 0, flow = poolUse.fubonJ15 || 0;
+    const bonusOf = F => 0.03 * Math.min(Math.max(F - 15000, 0), 33333);
+    const extra = bonusOf(prior + flow) - bonusOf(prior);
+    jBonus = { spend: prior + flow, extra, over: Math.min(Math.max(prior + flow - 15000, 0), 33333) };
+    total += extra;
+  }
+  return { rows, poolUse, total, spend, jBonus };
+}
+
+
+/* ===== 介面 ===== */
+const GROUP_ORDER = ['日本現場', '出發前／網購'];
+const DEFAULTS = [
+  { scn: 'suica',   amt: 15000 },
+  { scn: 'uniqlo',  amt: 8000 },
+  { scn: 'chain',   amt: 12000 },
+  { scn: 'general', amt: 6000 },
+  { scn: 'ees',     amt: 7000 },
+  { scn: 'klook',   amt: 6000 },
+  { scn: 'insHol',  amt: 800 }
+];
+const KEY = 'jp-card-calc-v1';
+let uid = 1;
+let items = load() || [];
+let isSample = false;
+let touched = false;
+
+function load() {
+  try {
+    const raw = localStorage.getItem(KEY); if (!raw) return null;
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr) || !arr.length) return null;
+    const ok = arr.filter(x => SCN[x.scn] && isFinite(x.amt));
+    if (!ok.length) return null;
+    ok.forEach(x => { x.id = uid++; });
+    touched = true;
+    return ok;
+  } catch (e) { return null; }
+}
+function save() {
+  touched = true; isSample = false;
+  try { localStorage.setItem(KEY, JSON.stringify(items.map(({ scn, amt }) => ({ scn, amt })))); } catch (e) {}
+}
+
+const $ = id => document.getElementById(id);
+const fmt = n => Math.round(n).toLocaleString('en-US');
+const pct = n => (Math.round(n * 100) / 100) + '%';
+const tagOf = P => (P.tag && !P.label.includes(P.tag)) ? P.tag : '';
+
+/* 幣別與匯率：內部一律用新台幣，日本現場可用日圓輸入 */
+const CKEY = 'jp-card-cfg-v1';
+let cfg = (() => {
+  try { const c = JSON.parse(localStorage.getItem(CKEY) || 'null');
+    if (c && (c.cur === 'JPY' || c.cur === 'TWD') && c.rate > 0) return c; } catch (e) {}
+  return { cur: 'JPY', rate: 5, cubeBase: 3.5 };
+})();
+if (!(cfg.cubeBase > 0)) cfg.cubeBase = 3.5;
+setCubeBase(cfg.cubeBase);
+function saveCfg() { try { localStorage.setItem(CKEY, JSON.stringify(cfg)); } catch (e) {} }
+const isJP = scn => SCN[scn].group === '日本現場';
+const curOf = scn => (isJP(scn) && cfg.cur === 'JPY') ? 'JPY' : 'TWD';
+const symOf = scn => curOf(scn) === 'JPY' ? '¥' : 'NT$';
+const toDisp = (twd, scn) => curOf(scn) === 'JPY' ? Math.round(twd * cfg.rate) : Math.round(twd);
+const fromDisp = (v, scn) => curOf(scn) === 'JPY' ? v / cfg.rate : v;
+const convHint = (twd, scn) => curOf(scn) === 'JPY' ? `≈ NT$${fmt(twd)}` : (isJP(scn) ? `≈ ¥${fmt(twd * cfg.rate)}` : '');
+const both = (twd, scn) => `NT$${fmt(twd)}` + (isJP(scn) ? ` ≈ ¥${fmt(twd * cfg.rate)}` : '');
+function syncCfgUI() {
+  $('cur-JPY').setAttribute('aria-pressed', String(cfg.cur === 'JPY'));
+  $('cur-TWD').setAttribute('aria-pressed', String(cfg.cur === 'TWD'));
+  if (document.activeElement !== $('rate')) $('rate').value = cfg.rate;
+  $('cfgSummary').textContent = `${cfg.cur === 'JPY' ? '日圓' : '新台幣'} · NT$1＝¥${cfg.rate} · CUBE ${CUBE_BASE}%`;
+}
+
+/* 標題色帶與圖例 */
+$('linemap').innerHTML = Object.values(CARDS).map(c => `<i style="--c:${c.color}"></i>`).join('');
+
+/* 我有哪些卡：沒勾的卡，順位與試算都會跳過 */
+const OKEY = 'jp-card-own-v1';
+let ownedIds = (() => {
+  try {
+    const a = JSON.parse(localStorage.getItem(OKEY) || 'null');
+    if (Array.isArray(a)) { const ok = a.filter(x => CARDS[x]); if (ok.length) return ok; }
+  } catch (e) {}
+  return Object.keys(CARDS);
+})();
+function applyOwned() { setOwned(ownedIds.length === Object.keys(CARDS).length ? null : new Set(ownedIds)); }
+function renderOwn() {
+  $('ownChips').innerHTML = Object.entries(CARDS).map(([k, c]) =>
+    `<button class="pill" data-k="${k}" aria-pressed="${ownedIds.includes(k)}"><span class="dot" style="--c:${c.color}"></span>${c.name}</button>`).join('');
+}
+$('ownChips').addEventListener('click', e => {
+  const b = e.target.closest('.pill'); if (!b) return;
+  const k = b.dataset.k;
+  if (ownedIds.includes(k)) { if (ownedIds.length === 1) return; ownedIds = ownedIds.filter(x => x !== k); }
+  else ownedIds = Object.keys(CARDS).filter(x => x === k || ownedIds.includes(x));
+  try { localStorage.setItem(OKEY, JSON.stringify(ownedIds)); } catch (err) {}
+  applyOwned(); renderOwn(); refreshAll($('logPool').value);
+});
+const toTwd = (raw, cur) => cur === 'JPY' ? raw / cfg.rate : raw;
+const defaultLogCur = scn => isJP(scn) ? cfg.cur : 'TWD';
+
+/* 分頁 */
+const tabs = ['calc', 'log', 'rank', 'rules'];
+tabs.forEach(k => {
+  $('t-' + k).addEventListener('click', () => {
+    tabs.forEach(j => {
+      $('t-' + j).setAttribute('aria-selected', String(j === k));
+      $('p-' + j).hidden = j !== k;
+    });
+  });
+});
+
+/* 行程試算 */
+function scnOptions(sel) {
+  return GROUP_ORDER.map(g =>
+    `<optgroup label="${g}">` +
+    Object.entries(SCN).filter(([k, s]) => s.group === g && (scnOn(k) || k === sel))
+      .map(([k, s]) => `<option value="${k}"${k === sel ? ' selected' : ''}>${s.name}</option>`).join('') +
+    `</optgroup>`).join('');
+}
+function renderRows() {
+  $('rows').innerHTML = items.map(it => `
+    <div class="row" data-id="${it.id}">
+      <select aria-label="消費情境">${scnOptions(it.scn)}</select>
+      <div class="amt">
+        <span class="sym">${symOf(it.scn)}</span>
+        <input type="number" inputmode="numeric" min="0" step="1" value="${toDisp(it.amt, it.scn)}" aria-label="預計消費金額">
+        <span class="yen num">${convHint(it.amt, it.scn)}</span>
+      </div>
+      <button class="btn ghost icon" aria-label="刪除這一筆" title="刪除">✕</button>
+    </div>`).join('');
+  $('sampleBadge').hidden = touched || !isSample;
+}
+$('rows').addEventListener('change', e => {
+  if (e.target.tagName !== 'SELECT') return;
+  const row = e.target.closest('.row');
+  const it = items.find(x => x.id === +row.dataset.id);
+  it.scn = e.target.value; save(); $('sampleBadge').hidden = true;
+  refreshRow(row, it); renderResult();
+});
+function refreshRow(row, it) {
+  row.querySelector('.sym').textContent = symOf(it.scn);
+  row.querySelector('input').value = toDisp(it.amt, it.scn);
+  row.querySelector('.yen').textContent = convHint(it.amt, it.scn);
+}
+$('rows').addEventListener('input', e => {
+  if (e.target.type !== 'number') return;
+  const row = e.target.closest('.row');
+  const it = items.find(x => x.id === +row.dataset.id);
+  it.amt = Math.max(0, fromDisp(parseFloat(e.target.value) || 0, it.scn)); save();
+  row.querySelector('.yen').textContent = convHint(it.amt, it.scn);
+  $('sampleBadge').hidden = true; renderResult();
+});
+$('rows').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const id = +b.closest('.row').dataset.id;
+  items = items.filter(x => x.id !== id); save(); renderRows(); renderResult();
+});
+$('add').addEventListener('click', () => {
+  items.push({ id: uid++, scn: 'general', amt: 0 }); save(); renderRows(); renderResult();
+});
+$('reset').addEventListener('click', () => {
+  items = DEFAULTS.map(d => ({ id: uid++, ...d })); touched = false; isSample = true;
+  try { localStorage.removeItem(KEY); } catch (e) {}
+  renderRows(); renderResult();
+});
+$('clear').addEventListener('click', () => {
+  items = []; save(); renderRows(); renderResult();
+});
+
+function renderResult() {
+  $('deductWrap').hidden = !log.length;
+  $('deductHint').textContent = log.length ? `刷卡紀錄已有 ${log.length} 筆；勾選後，已刷掉的額度不會再被分配` : '';
+  const deduct = log.length > 0 && $('deduct').checked, base = deduct ? usedMap() : {};
+  const r = solve(items, deduct ? base : null);
+  const cashSpend = r.rows.filter(x => x.cash).reduce((a, x) => a + x.item.amt, 0);
+  const eff = r.spend > 0 ? r.total / r.spend * 100 : 0;
+  $('summary').innerHTML = `
+    <div><small>刷卡消費</small><strong>NT$${fmt(r.spend)}</strong></div>
+    <div><small>預估回饋</small><strong>NT$${fmt(r.total)}</strong></div>
+    <div><small>平均回饋率</small><strong>${eff.toFixed(2)}%</strong></div>`;
+
+  const cards = r.rows.filter(x => x.item.amt > 0).map(x => {
+    const s = SCN[x.item.scn];
+    if (x.cash) {
+      return `<article class="card-row"><header><span>${s.name}</span><span class="num">${both(x.item.amt, x.item.scn)}</span></header>
+        <p class="cashnote">付現金，不計回饋。</p></article>`;
+    }
+    const legs = x.alloc.map(a => {
+      const p = POOLS[a.p], c = CARDS[p.card];
+      return `<span class="chip" style="--c:${c.color}">${c.short}</span>
+        <span class="num">NT$${fmt(a.amt)} × ${pct(p.rate)}${p.tag ? ' · ' + p.tag : ''}</span>
+        <span class="gain">+${fmt(a.reward)}</span>`;
+    }).join('');
+    const note = x.item.scn === 'tadaya' ? `<p class="cashnote">12% 折價券另計，不在回饋內。</p>` : '';
+    const left = x.item.amt - x.alloc.reduce((a, b) => a + b.amt, 0);
+    const leftNote = left > 0.5
+      ? `<p class="cashnote">${x.alloc.length ? '其餘' : '你勾選的卡在這個情境沒有可用的加碼額度，'} NT$${fmt(left)}${isJP(x.item.scn) ? ` ≈ ¥${fmt(left * cfg.rate)}` : ''} 不列入回饋試算。</p>` : '';
+    return `<article class="card-row"><header><span>${s.name}</span><span class="num">${both(x.item.amt, x.item.scn)}</span></header>
+      ${legs ? `<div class="leg">${legs}</div>` : ''}${note}${leftNote}</article>`;
+  });
+  if (r.jBonus && r.jBonus.spend > 0) {
+    cards.push(`<article class="card-row"><header><span>富邦 J 卡加碼 3%</span><span class="num">+${fmt(r.jBonus.extra)}</span></header>
+      <p class="cashnote">J 卡本月消費合計 NT$${fmt(r.jBonus.spend)}，超過 NT$15,000 的 NT$${fmt(r.jBonus.over)} 加碼 3%。需當月登錄、每月限量，上限 1,000 元。</p></article>`);
+  }
+  if (hasCard('fubon') && !(OWNED && OWNED.size === 1) && cards.length) {
+    const on = r.rows.filter(x => !x.cash && x.item.amt > 0 && SCN[x.item.scn].group === '日本現場');
+    const F = on.reduce((s, x) => s + x.item.amt, 0), plan = on.reduce((s, x) => s + x.alloc.reduce((a, b) => a + b.reward, 0), 0);
+    if (F > 0) {
+      const over = Math.min(Math.max(F - 15000, 0), 33333), J = F * 0.015 + over * 0.03, diff = J - plan;
+      cards.push(`<article class="card-row"><header><span>富邦 J 卡：全部集中刷</span><span class="num">NT$${fmt(F)}</span></header>
+        <div class="leg"><span class="chip" style="--c:${CARDS.fubon.color}">${CARDS.fubon.short}</span>
+        <span class="num">基本 1.5% ${F >= 15000 ? '＋ 超過 15,000 的 ' + fmt(over) + ' 加碼 3%' : '（未滿 15,000，無加碼）'}</span><span class="gain">+${fmt(J)}</span></div>
+        <p class="cashnote">${diff > 0.5 ? '比上面的分配多 NT$' + fmt(diff) : '比上面的分配少 NT$' + fmt(-diff)}（分配回饋 NT$${fmt(plan)}）。需搶到每月 20 日 16:00 的登錄名額，且消費當月完成登錄；每月加碼回饋上限 1,000 元。只算日本現場的消費。</p></article>`);
+    }
+  }
+  $('alloc').innerHTML = cards.length ? cards.join('') : `<p class="cashnote">按「新增一筆」輸入預計消費，或按「看範例」。這裡會顯示每筆該刷哪張卡。</p>`;
+
+  const tot = id => (base[id] || 0) + (r.poolUse[id] || 0);
+  const used = Object.entries(POOLS).filter(([id, p]) => p.cap < INF && tot(id) > 0);
+  $('quota').innerHTML = used.length ? used.map(([id, p]) => {
+    const u = tot(id), full = u >= p.cap - 0.5, c = CARDS[p.card];
+    return `<div class="q" style="--c:${c.color}">
+      <span>${p.label}${tagOf(p) ? '（' + tagOf(p) + '）' : ''}</span>
+      <span class="num ${full ? 'full' : ''}">${fmt(u)} / ${fmt(p.cap)}${full ? ' 已刷滿' : ''}</span>
+      <div class="bar"><i style="width:${Math.min(100, u / p.cap * 100)}%"></i></div></div>`;
+  }).join('') + sharedRows(Object.fromEntries(Object.keys(POOLS).map(id => [id, tot(id)]))) : `<p class="cashnote">目前沒有使用到有上限的額度。</p>`;
+}
+
+/* 順位查詢 */
+let curScn = 'suica';
+function renderChips() {
+  if (!scnOn(curScn)) curScn = 'suica';
+  $('chips').innerHTML = GROUP_ORDER.map(g => `
+    <div class="grp">${g}</div>
+    <div class="chips">${Object.entries(SCN).filter(([k, s]) => s.group === g && scnOn(k)).map(([k, s]) =>
+      `<button class="pill" data-k="${k}" aria-pressed="${k === curScn}">${s.name}</button>`).join('')}</div>`).join('');
+}
+function renderStation() {
+  const s = SCN[curScn], u = usedMap(), rec = recommend(curScn);
+  let rk = 0, prevR = null, anyTie = false;
+  const list = optsOf(curScn).map((o) => {
+    const { p, fb } = parseOpt(o), P = POOLS[p], c = CARDS[P.card];
+    const tie = !fb && prevR !== null && Math.abs(P.rate - prevR) < 0.005;
+    if (!fb) { if (!tie) rk++; prevR = P.rate; } if (tie) anyTie = true;
+    const rem = remain(p, u), done = rem <= 0;
+    const cap = P.cap < INF ? `額度 NT$${fmt(P.cap)}，剩 NT$${fmt(rem)}` : '無上限';
+    return `<li class="${fb ? 'fb' : ''} ${done ? 'done' : ''}" style="--c:${c.color}">
+      <span class="name"><span class="rankno">${fb ? '備援' : tie ? '＝' : '第 ' + rk}</span>${c.name}</span>
+      <span class="rate">${pct(P.rate)}</span>
+      <span class="meta">${p === rec ? '<span class="tag now">目前建議</span>' : ''}${done ? '<span class="tag">已刷滿</span>' : ''}<span>${P.label}</span><span>${cap}</span>${tagOf(P) ? `<span class="tag">${tagOf(P)}</span>` : ''}${fb ? '<span>v5 未列，推定</span>' : ''}</span></li>`;
+  }).join('');
+  const notes = (s.notes || []).map(n => `<p>${n}</p>`).join('');
+  $('station').innerHTML = `<h3>${s.name}</h3>${s.sub ? `<p class="sub">${s.sub}</p>` : ''}
+    ${list ? `<ol class="line">${list}</ol>` : `<p class="cashnote" style="padding-bottom:12px">${s.opts.length ? '你勾選的卡在這個情境沒有加碼，用哪張都可以。' : '不刷卡，付現金。'}</p>`}
+    ${anyTie ? '<div class="notes"><p>「＝」同順位：可以集中刷一張，也可以依各卡額度拆開刷。</p></div>' : ''}
+    ${notes ? `<div class="notes">${notes}</div>` : ''}`;
+}
+$('chips').addEventListener('click', e => {
+  const b = e.target.closest('.pill'); if (!b) return;
+  curScn = b.dataset.k; renderChips(); renderStation();
+});
+
+/* 規則表（由同一份資料產生） */
+function renderRules() {
+  const where = {};
+  Object.entries(SCN).forEach(([k, s]) => s.opts.forEach(o => { const p = parseOpt(o).p; (where[p] = where[p] || []).push(s.name); }));
+  $('rulesTable').innerHTML = `<thead><tr><th>卡片與條件</th><th class="r">淨回饋</th><th class="r">額度</th><th>使用情境</th></tr></thead><tbody>` +
+    Object.entries(POOLS).map(([id, P]) => `<tr>
+      <td><span class="chip" style="--c:${CARDS[P.card].color}">${P.label}</span>${P.tag ? ` <span class="tag">${P.tag}</span>` : ''}</td>
+      <td class="num">${pct(P.rate)}</td>
+      <td class="num">${P.cap < INF ? 'NT$' + fmt(P.cap) : '無上限'}</td>
+      <td>${(where[id] || []).join('、')}</td></tr>`).join('') + `</tbody>`;
+}
+
+/* 刷卡紀錄：只存在這個瀏覽器 */
+const LKEY = 'jp-card-log-v1';
+let log = loadLog();
+function loadLog() {
+  try {
+    const a = JSON.parse(localStorage.getItem(LKEY) || '[]');
+    return Array.isArray(a) ? a.filter(x => SCN[x.scn] && POOLS[x.p] && x.amt > 0) : [];
+  } catch (e) { return []; }
+}
+function saveLog() { try { localStorage.setItem(LKEY, JSON.stringify(log)); } catch (e) {} }
+function usedMap() { const m = {}; log.forEach(x => { m[x.p] = (m[x.p] || 0) + x.amt; }); return m; }
+function sharedUsed(sid, u) {
+  return Object.keys(POOLS).filter(id => POOLS[id].shared === sid).reduce((a, id) => a + (u[id] || 0), 0);
+}
+function remain(id, u) {
+  let r = POOLS[id].cap >= INF ? Infinity : Math.max(0, POOLS[id].cap - (u[id] || 0));
+  const sid = POOLS[id].shared;
+  if (sid) r = Math.min(r, Math.max(0, SHARED[sid].cap - sharedUsed(sid, u)));
+  return r;
+}
+function sharedRows(u) {
+  return Object.entries(SHARED).map(([sid, S]) => {
+    const used = sharedUsed(sid, u); if (used <= 0) return '';
+    const full = used >= S.cap - 0.5;
+    return `<div class="q" style="--c:${CARDS[S.card].color}"><span>${S.label}</span>
+      <span class="num ${full ? 'full' : ''}">${fmt(used)} / ${fmt(S.cap)}${full ? ' 已刷滿' : ''}</span>
+      <div class="bar"><i style="width:${Math.min(100, used / S.cap * 100)}%"></i></div></div>`;
+  }).join('');
+}
+function recommend(scn) {
+  const u = usedMap();
+  for (const o of optsOf(scn)) { const p = parseOpt(o).p; if (remain(p, u) > 0) return p; }
+  return null;
+}
+
+/* 順位總表：每個情境一列，依序刷 */
+function renderOverview() {
+  const u = usedMap();
+  const capText = (P, id, scn, rem) => {
+    if (P.cap >= INF) return '不限額';
+    const used = (u[id] || 0) > 0;
+    const v = used ? rem : Math.min(P.cap, rem);
+    const money = curOf(scn) === 'JPY' ? '¥' + fmt(v * cfg.rate) : 'NT$' + fmt(v);
+    return (used ? '剩 ' : '最多 ') + money;
+  };
+  $('overview').innerHTML = GROUP_ORDER.map(g => `<div class="grp">${g}</div>` +
+    Object.entries(SCN).filter(([k, s]) => s.group === g && scnOn(k)).map(([k, s]) => {
+      const all = optsOf(k).map(parseOpt);
+      const main = all.filter(o => !o.fb), chosen = (main.length ? main : all).slice(0, 4);
+      let body;
+      if (!s.opts.length) body = '<span class="none">付現金；或用玉山 Wallet／台新 Pay 的 PayPay 類儲值（說明見「規則表」最下方）</span>';
+      else if (!chosen.length) body = '<span class="none">你勾選的卡在這裡沒有加碼，用哪張都可以</span>';
+      else { let rk = 0, prev = null; body = chosen.map(({ p, fb }) => {
+        const P = POOLS[p], c = CARDS[P.card], rem = remain(p, u);
+        const t = tagOf(P);
+        const tie = prev !== null && Math.abs(P.rate - prev) < 0.005; if (!tie) rk++; prev = P.rate;
+        return `<div class="step ${fb ? 'fb' : ''} ${rem <= 0 ? 'done' : ''} ${tie ? 'tie' : ''}"><span class="n">${tie ? '=' : rk}</span>
+          <span class="who"><span class="chip" style="--c:${c.color}">${c.name}</span><small>${rem <= 0 ? '已刷滿' : capText(P, p, k, rem)}${t ? ' · ' + t : ''}${fb ? ' · 備援' : ''}</small></span>
+          <span class="r">${pct(P.rate)}</span></div>`;
+      }).join('') + (chosen.some((o, i) => i && Math.abs(POOLS[o.p].rate - POOLS[chosen[i-1].p].rate) < 0.005) ? '<div class="tienote">「=」同順位：可集中刷一張，或依各卡額度拆開刷。</div>' : ''); }
+      return `<div class="ovrow"><div class="ovname">${s.name}${s.sub ? `<small>${s.sub}</small>` : ''}</div><div class="steps">${body}</div></div>`;
+    }).join('')).join('');
+}
+const logScns = Object.entries(SCN).filter(([, s]) => s.opts.length);
+$('logScn').innerHTML = GROUP_ORDER.map(g => `<optgroup label="${g}">` +
+  logScns.filter(([, s]) => s.group === g).map(([k, s]) => `<option value="${k}">${s.name}</option>`).join('') + `</optgroup>`).join('');
+
+function poolListFor(scn) {
+  const list = optsOf(scn).map(o => parseOpt(o).p);
+  if (SCN[scn].logAll) Object.keys(POOLS).filter(id => !POOLS[id].pre && !list.includes(id) && hasCard(POOLS[id].card)).forEach(id => list.push(id));
+  return list;
+}
+function fillPools(keepSel) {
+  const scn = $('logScn').value, u = usedMap(), rec = recommend(scn), plist = poolListFor(scn);
+  const sel = keepSel && plist.includes(keepSel) ? keepSel : rec;
+  $('logPool').innerHTML = plist.map(p => {
+    const P = POOLS[p], rem = remain(p, u);
+    const t = P.cap < INF ? `（剩 NT$${fmt(rem)}）` : '';
+    return `<option value="${p}"${p === sel ? ' selected' : ''}>${CARDS[P.card].short} ${pct(P.rate)}${t}</option>`;
+  }).join('');
+  updateHint();
+}
+function updateHint() {
+  const scn = $('logScn').value, rec = recommend(scn);
+  const cur = $('logCur').value, raw = parseFloat($('logAmt').value) || 0, amt = toTwd(raw, cur);
+  $('logAmtLbl').textContent = '金額（' + (cur === 'JPY' ? '日圓' : '新台幣') + '）';
+  const p = $('logPool').value, rem = p ? remain(p, usedMap()) : Infinity;
+  let h = '';
+  if (!SCN[scn].opts.length || !$('logPool').options.length) h = '你勾選的卡在這個情境沒有加碼，不需要記錄。';
+  else if (rec) h = `這個情境現在建議刷 <b>${CARDS[POOLS[rec].card].name} ${pct(POOLS[rec].rate)}</b>` +
+    (POOLS[rec].cap < INF ? `，還剩 NT$${fmt(remain(rec, usedMap()))}。` : '。');
+  else h = '這個情境的額度都已刷滿。';
+  if (raw > 0 && cur === 'JPY') h +=` 這筆 ¥${fmt(raw)} ≈ NT$${fmt(amt)}。`;
+  if (amt > 0 && rem < amt && rem !== Infinity) h +=` <span class="over">這筆超過 ${POOLS[p].label} 剩餘額度 NT$${fmt(rem)}，建議拆到下一張。</span>`;
+  $('logHint').innerHTML = h;
+}
+function today() {
+  const d = new Date(), z = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
+}
+function renderLog() {
+  const u = usedMap();
+  $('board').innerHTML = Object.entries(POOLS).filter(([, p]) => p.cap < INF).map(([id, p]) => {
+    const used = u[id] || 0, rem = remain(id, u), c = CARDS[p.card];
+    return `<div class="q" style="--c:${c.color}">
+      <span>${p.label}${tagOf(p) ? '（' + tagOf(p) + '）' : ''}</span>
+      <span class="num ${rem <= 0 ? 'full' : ''}">${rem <= 0 ? '已刷滿' : '剩 NT$' + fmt(rem)} · ${fmt(used)} / ${fmt(p.cap)}</span>
+      <div class="bar"><i style="width:${Math.min(100, used / p.cap * 100)}%"></i></div></div>`;
+  }).join('') + sharedRows(u);
+  $('entries').innerHTML = log.length ? log.map(x => `
+    <div class="entry" data-id="${x.id}">
+      <span class="d num">${x.d.slice(5)}</span>
+      <span class="what"><span>${SCN[x.scn].name}</span>${x.note ? `<span class="memo">${esc(x.note)}</span>` : ''}<small>${POOLS[x.p].label}</small></span>
+      <span class="num">${x.cur === 'JPY' ? `¥${fmt(x.raw)}<br><small style="color:var(--muted)">≈ NT$${fmt(x.amt)}</small>` : `NT$${fmt(x.amt)}`}</span>
+      <button aria-label="刪除這筆紀錄" title="刪除">✕</button>
+    </div>`).join('') : `<div class="empty">還沒有紀錄。刷完一筆就在上面記下來。</div>`;
+}
+function refreshAll(keepSel) { renderChips(); renderLog(); fillPools(keepSel); renderResult(); renderStation(); renderOverview(); }
+
+$('logScn').addEventListener('change', () => { $('logCur').value = defaultLogCur($('logScn').value); fillPools(); });
+$('logCur').addEventListener('change', updateHint);
+$('logPool').addEventListener('change', updateHint);
+$('logAmt').addEventListener('input', updateHint);
+$('logAdd').addEventListener('click', () => {
+  const scn = $('logScn').value, cur = $('logCur').value, raw = parseFloat($('logAmt').value) || 0, amt = toTwd(raw, cur);
+  if (!$('logPool').value) { updateHint(); return; }
+  if (amt <= 0) { $('logHint').innerHTML = '<span class="over">請先輸入金額。</span>'; return; }
+  log.unshift({ id: Date.now() + '' + Math.floor(Math.random() * 1000), d: today(), scn, p: $('logPool').value,
+    amt, cur, raw, note: $('logNote').value.trim().slice(0, 30) });
+  saveLog(); $('logAmt').value = ''; $('logNote').value = ''; refreshAll($('logPool').value);
+});
+$('entries').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const id = b.closest('.entry').dataset.id;
+  log = log.filter(x => x.id !== id); saveLog(); refreshAll($('logPool').value);
+});
+let clearArmed = false, clearTimer = 0;
+$('logClear').addEventListener('click', () => {
+  if (!log.length) return;
+  if (!clearArmed) {
+    clearArmed = true; $('logClear').textContent = '再按一次確認清除';
+    clearTimer = setTimeout(() => { clearArmed = false; $('logClear').textContent = '清除全部紀錄'; }, 4000);
+    return;
+  }
+  clearTimeout(clearTimer); clearArmed = false; $('logClear').textContent = '清除全部紀錄';
+  log = []; saveLog(); refreshAll();
+});
+$('deduct').addEventListener('change', renderResult);
+
+/* 幣別與匯率切換 */
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+['JPY', 'TWD'].forEach(c => $('cur-' + c).addEventListener('click', () => {
+  cfg.cur = c; saveCfg(); syncCfgUI(); renderRows(); $('logAmt').value = '';
+  $('logCur').value = defaultLogCur($('logScn').value); updateHint(); renderResult(); renderOverview();
+}));
+$('rate').addEventListener('input', () => {
+  const v = parseFloat($('rate').value);
+  if (!(v > 0)) return;
+  cfg.rate = v; saveCfg(); renderRows(); updateHint(); renderResult(); renderOverview();
+});
+$('rate').addEventListener('blur', syncCfgUI);
+$('cubeBase').value = cfg.cubeBase;
+$('cubeBase').addEventListener('input', () => {
+  const v = parseFloat($('cubeBase').value);
+  if (!(v > 0)) return;
+  cfg.cubeBase = v; setCubeBase(v); saveCfg(); syncCfgUI(); renderRules(); refreshAll($('logPool').value);
+});
+$('cubeBase').addEventListener('blur', () => { $('cubeBase').value = CUBE_BASE; });
+
+applyOwned(); renderOwn();
+$('logCur').value = defaultLogCur($('logScn').value);
+syncCfgUI(); renderRows(); renderChips(); renderRules(); refreshAll();
+</script>
+
+</html>
